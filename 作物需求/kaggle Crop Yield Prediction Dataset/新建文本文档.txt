@@ -1,0 +1,3 @@
+网址：https://www.kaggle.com/datasets/patelris/crop-yield-prediction-dataset?select=yield_df.csv
+Rainfall & Avg. Temperature来自World Data Bank
+Yield_df.csv是通过清理和合并农药、产量、降雨量和平均温度处理的最终数据集。
