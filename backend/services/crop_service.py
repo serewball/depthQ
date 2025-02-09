@@ -23,6 +23,18 @@ class CropService:
             self.dqn_agent = DQNAgent(self.state_size, self.action_size)
             self.decision_count = 0
             
+            # 可以修改温度阈值
+            self.TEMPERATURE_THRESHOLDS = {
+                'high': 30,
+                'medium': 25
+            }
+            
+            # 或湿度判断范围
+            self.HUMIDITY_RANGES = {
+                'low': 50,
+                'high': 70
+            }
+            
         except Exception as e:
             print(f"初始化CropService时出错: {e}")
             raise
@@ -215,10 +227,191 @@ class CropService:
         return next_state
     
     def _get_irrigation_timing(self, temperature, humidity):
-        """根据温度和湿度确定最佳灌溉时间"""
-        if temperature > 30:
-            return "建议在清晨或傍晚进行灌溉，避免水分蒸发"
-        elif humidity < 40:
-            return "建议分多次少量灌溉，避免水分快速流失"
-        else:
-            return "建议在上午进行灌溉，保证作物充分吸收" 
+        """生成灌溉时间建议（新增详细逻辑）"""
+        try:
+            # 温度判断标准
+            temp_thresholds = [
+                (35, "凌晨（4:00-6:00）"),
+                (30, "清晨（5:00-7:00）"),
+                (25, "上午（8:00-10:00）"), 
+                (20, "下午（15:00-17:00）"),
+                (float('-inf'), "正午（11:00-13:00）")
+            ]
+            
+            # 湿度判断标准
+            humidity_ranges = [
+                (70, "建议推迟灌溉"),
+                (60, "建议分2次灌溉，间隔3小时"),
+                (50, "建议单次完成"),
+                (40, "建议分3次灌溉，间隔2小时"),
+                (float('-inf'), "立即灌溉")
+            ]
+            
+            # 查找温度建议
+            time_suggestion = "建议时间："
+            for threshold, suggestion in temp_thresholds:
+                if temperature > threshold:
+                    time_suggestion = suggestion
+                    break
+                
+            # 查找湿度建议
+            freq_suggestion = "频率建议："
+            for threshold, suggestion in humidity_ranges:
+                if humidity > threshold:
+                    freq_suggestion = suggestion
+                    break
+                
+            # 组合建议
+            detailed_advice = f"{time_suggestion}，{freq_suggestion}"
+            
+            # 特殊条件处理
+            if temperature > 35 and humidity < 40:
+                detailed_advice += "（注意防蒸发）"
+            elif temperature < 10:
+                detailed_advice += "（建议使用温水灌溉）"
+            
+            return detailed_advice
+            
+        except Exception as e:
+            print(f"生成灌溉时间建议时出错: {e}")
+            return "建议时间：根据当前条件无法提供具体建议"
+    
+    def get_optimal_conditions(self, current_state):
+        # 预测建议
+        adjustments = self.dqn_agent.predict(current_state)
+        
+        # 模拟执行建议后的新状态
+        new_temp = current_state[0] + adjustments[0]
+        new_humidity = current_state[1] + adjustments[1]
+        new_rainfall = current_state[2] + adjustments[2]
+        
+        # 计算奖励值（基于与最佳条件的接近程度）
+        reward = self._calculate_reward(new_temp, new_humidity, new_rainfall)
+        
+        # 更新模型
+        self.dqn_agent.update_model(
+            state=current_state,
+            action=adjustments,
+            reward=reward,
+            next_state=[new_temp, new_humidity, new_rainfall]
+        )
+        
+        return adjustments
+
+    def generate_crop_status(self, weather_data):
+        """生成作物状态记录并返回DataFrame"""
+        status_data = []
+        
+        # 按作物类型分组处理
+        grouped = self.crop_data.groupby('Crop')
+        for crop_name, group in grouped:
+            # 计算该作物的平均最佳条件
+            avg_conditions = group.mean(numeric_only=True)
+            
+            # 构建当前状态
+            current_state = self.dqn_agent.get_state(
+                weather_data, 
+                {
+                    'Temperature': avg_conditions['Temperature'],
+                    'Humidity': avg_conditions['Humidity'],
+                    'Rainfall': avg_conditions['Rainfall']
+                }
+            )
+            
+            # 获取DQN建议
+            action = self.dqn_agent.get_action(current_state)
+            water_amount = action * 5  # 每个动作对应5mm灌溉量
+            
+            status_data.append({
+                '作物名': crop_name,
+                '当前温度': weather_data['main']['temp'],
+                '当前湿度': weather_data['main']['humidity'],
+                '当前日降雨量': weather_data.get('rain', {}).get('1h', 0) * 24,
+                '最佳温度': avg_conditions['Temperature'],
+                '最佳湿度': avg_conditions['Humidity'],
+                '最佳日降雨量': avg_conditions['Rainfall'] / 365,
+                '建议灌溉量': water_amount,
+                '匹配度评分': self._calculate_match_score(weather_data, avg_conditions)
+            })
+        
+        return pd.DataFrame(status_data)
+
+    def _calculate_match_score(self, weather_data, crop_conditions):
+        """
+        计算当前条件与最佳条件的匹配度评分（0-100）
+        """
+        try:
+            # 获取当前环境数据
+            current_temp = weather_data['main']['temp']
+            current_humidity = weather_data['main']['humidity']
+            current_rainfall = weather_data.get('rain', {}).get('1h', 0) * 24  # 转换为日降雨量
+            
+            # 获取最佳条件
+            optimal_temp = crop_conditions['Temperature']
+            optimal_humidity = crop_conditions['Humidity']
+            optimal_rainfall = crop_conditions['Rainfall'] / 365  # 年降雨转日降雨
+            
+            # 计算各项差异（使用相对误差）
+            temp_diff = abs(current_temp - optimal_temp) / optimal_temp
+            humidity_diff = abs(current_humidity - optimal_humidity) / optimal_humidity
+            rainfall_diff = abs(current_rainfall - optimal_rainfall) / optimal_rainfall if optimal_rainfall != 0 else 0
+            
+            # 计算基础评分（100分制）
+            base_score = 100 - (
+                temp_diff * 40 +  # 温度占40%权重
+                humidity_diff * 30 +  # 湿度占30%权重
+                rainfall_diff * 30  # 降雨量占30%权重
+            )
+            
+            # 确保评分在合理范围内
+            final_score = max(0, min(100, base_score))
+            
+            # 添加额外修正（当所有条件都接近最佳值时给予奖励分）
+            if temp_diff < 0.05 and humidity_diff < 0.05 and rainfall_diff < 0.1:
+                final_score = min(100, final_score + 5)
+                
+            return round(final_score, 1)
+            
+        except KeyError as e:
+            print(f"计算匹配度时缺少必要字段: {e}")
+            return 0
+        except ZeroDivisionError:
+            print("警告：最佳条件中存在0值，可能导致计算异常")
+            return 0
+
+    def get_irrigation_advice(self, crop_name, weather_data):
+        """获取基于DQN的灌溉建议"""
+        try:
+            # 获取作物信息
+            crop_info = self.crop_data[self.crop_data['Crop'] == crop_name].iloc[0]
+            
+            # 构建当前状态
+            current_state = self.dqn_agent.get_state(
+                weather_data=weather_data,
+                crop_info={
+                    'Temperature': crop_info['Temperature'],
+                    'Humidity': crop_info['Humidity'],
+                    'Rainfall': crop_info['Rainfall']
+                }
+            )
+            
+            # 获取DQN推荐动作
+            action = self.dqn_agent.get_action(current_state)
+            
+            # 转换为实际灌溉量（每个动作对应5mm）
+            water_amount = action * 5
+            
+            # 获取灌溉时间建议
+            schedule = self._get_irrigation_timing(
+                temperature=weather_data['main']['temp'],
+                humidity=weather_data['main']['humidity']
+            )
+            
+            return {
+                'water_amount': water_amount,
+                'schedule': schedule
+            }
+            
+        except Exception as e:
+            print(f"生成灌溉建议时出错: {e}")
+            return {'water_amount': 0, 'schedule': '暂无法提供建议'}

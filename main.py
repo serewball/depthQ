@@ -14,6 +14,22 @@ LOCATIONS = {
     '南宁': (22.8170, 108.3665)
 }
 
+def preprocess_crop_data(crop_service):
+    """
+    对作物数据进行预处理，每种作物生成一条汇总数据
+    """
+    # 获取原始数据
+    df = crop_service.crop_data
+    
+    # 按作物名称分组并计算平均值
+    processed_data = df.groupby('Crop').agg({
+        'Temperature': 'mean',
+        'Humidity': 'mean',
+        'Rainfall': 'mean'
+    }).reset_index()
+    
+    return processed_data
+
 def main():
     # 初始化服务
     weather_service = WeatherService()
@@ -31,23 +47,23 @@ def main():
     weather_data = weather_service.get_weather_data(lat, lon)
     
     if weather_data:
-        print(f"\n=== {location_name}当前天气数据 ===")
-        print(f"位置: {weather_data['location']['name']}, {weather_data['location']['country']}")
-        print(f"天气: {weather_data['weather']['description']}")
-        print(f"温度: {weather_data['main']['temp']}°C")
-        print(f"湿度: {weather_data['main']['humidity']}%")
-        print(f"气压: {weather_data['main']['pressure']}hPa")
-        print(f"降雨量: {weather_data['rain'].get('1h', 0)}mm/h")
-        print(f"风速: {weather_data['wind']['speed']}m/s")
+        # 预处理作物数据
+        print("\n正在预处理作物数据...")
+        processed_crop_data = preprocess_crop_data(crop_service)
         
         # 收集作物状态数据
         crop_status_data = []
         
-        # 获取所有作物数据并生成状态记录
+        # 使用预处理后的数据生成状态记录
         print("\n=== 生成所有作物的状态记录 ===")
-        for _, crop in crop_service.crop_data.iterrows(): 
+        for _, crop in processed_crop_data.iterrows():
             crop_name = crop['Crop']
-            # print(f"正在生成 {crop_name} 的状态记录...")
+            
+            # 获取DQN灌溉建议
+            irrigation_advice = crop_service.get_irrigation_advice(
+                crop_name=crop_name,
+                weather_data=weather_data
+            )
             
             # 收集作物状态数据
             crop_status_data.append({
@@ -57,12 +73,41 @@ def main():
                 '当前日降雨量(mm)': weather_data.get('rain', {}).get('1h', 0) * 24,
                 '最佳温度(°C)': crop['Temperature'],
                 '最佳湿度(%)': crop['Humidity'],
-                '最佳日降雨量(mm)': crop['Rainfall'] / 365
+                '最佳日降雨量(mm)': crop['Rainfall'] / 365,
+                '灌溉建议(mm)': irrigation_advice['water_amount'],
+                '建议时间': irrigation_advice['schedule']
             })
         
         # 将作物状态数据保存到 Excel 文件
         crop_status_df = pd.DataFrame(crop_status_data)
-        status_file_path = os.path.join("D:\\py\\output\\images", f"作物状态记录{location_name}.xlsx")
+        status_file_path = os.path.join("D:\\py\\view\\public", f"作物状态记录{location_name}.xlsx")
+        
+        # 在生成DataFrame后添加列顺序验证
+        print("当前DataFrame列:", crop_status_df.columns.tolist())
+        
+        # 强制指定列顺序（确保包含建议时间）
+        required_columns = [
+            '作物名',
+            '当前温度(°C)',
+            '当前湿度(%)', 
+            '当前日降雨量(mm)',
+            '最佳温度(°C)',
+            '最佳湿度(%)',
+            '最佳日降雨量(mm)',
+            '灌溉建议(mm)',
+            '建议时间'
+        ]
+        
+        # 检查缺失列
+        missing_cols = set(required_columns) - set(crop_status_df.columns)
+        if missing_cols:
+            print(f"警告：缺失以下列: {missing_cols}")
+            for col in missing_cols:
+                crop_status_df[col] = "数据缺失"
+        
+        # 重新排序列
+        crop_status_df = crop_status_df[required_columns]
+        
         crop_status_df.to_excel(status_file_path, index=False)
         print(f"作物状态记录已保存至: {status_file_path}")
         
@@ -106,7 +151,7 @@ def main():
             )
             
             # 写入文本文件
-            advice_file_path = os.path.join("D:\\py\\output\\images", f"{rec['name']}灌溉建议.txt")
+            advice_file_path = os.path.join("D:\\py\\view\\public", f"{rec['name']}灌溉建议.txt")
             with open(advice_file_path, 'w', encoding='utf-8') as f:
                 f.write(irrigation_advice)
             print(f"灌溉建议已保存至: {advice_file_path}")
@@ -130,7 +175,7 @@ def main():
                     
                     # 生成灌溉历史的 Excel 文件
                     irrigation_history_df = vis_service.get_irrigation_history_df(irrigation_plan['crop_name'])
-                    history_file_path = os.path.join("D:\\py\\output\\images", f"{first_crop}灌溉历史.xlsx")
+                    history_file_path = os.path.join("D:\\py\\view\\public", f"{first_crop}灌溉历史.xlsx")
                     irrigation_history_df.to_excel(history_file_path, index=False)
                     print(f"灌溉历史已保存至: {history_file_path}")
                     
@@ -173,13 +218,49 @@ def main():
     print("\n智慧灌溉系统运行完成")
     
     # 检查图片是否生成
-    output_dir = os.path.join(os.getcwd(), 'output', 'images')
+    output_dir = "D:\\py\\view\\public"
     if os.path.exists(output_dir):
         print(f"\n输出目录 {output_dir} 中的文件:")
         for file in os.listdir(output_dir):
             print(f"- {file}")
     else:
         print(f"\n输出目录 {output_dir} 不存在")
+
+    # 生成作物状态记录
+    crop_status_df = crop_service.generate_crop_status(weather_data)
+    
+    # 保存到Excel
+    output_dir = "D:\\py\\view\\public"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 生成带时间戳的文件名
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    excel_path = os.path.join(output_dir, f"作物状态记录广州.xlsx")
+    
+    # 设置Excel格式
+    writer = pd.ExcelWriter(excel_path, engine='xlsxwriter')
+    crop_status_df.to_excel(writer, index=False, sheet_name='作物状态')
+    
+    # 添加格式
+    workbook = writer.book
+    worksheet = writer.sheets['作物状态']
+    
+    # 设置列宽
+    worksheet.set_column('A:G', 15)
+    
+    # 添加条件格式
+    red_format = workbook.add_format({'bg_color': '#FFC7CE'})
+    green_format = workbook.add_format({'bg_color': '#C6EFCE'})
+    
+    # 当前温度与最佳温度差异超过±3°C标红
+    worksheet.conditional_format('B2:B1000', {
+        'type': 'formula',
+        'criteria': '=ABS(B2-E2)>3',
+        'format': red_format
+    })
+    
+    writer.close()
+    print(f"作物状态记录已保存至: {excel_path}")
 
 if __name__ == "__main__":
     main() 
