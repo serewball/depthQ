@@ -29,6 +29,7 @@
           </el-scrollbar>
           <!-- 右侧内容区域 -->
           <div class="chart-container">
+            <!-- 地点选择 -->
             <!-- 天气信息卡片 -->
             <el-card class="weather-card">
               <div class="weather-info">
@@ -51,11 +52,20 @@
                 
               </div>
             </el-card>
-            
+            <div class="location-selector">
+              <el-radio-group v-model="currentLocation" @change="handleLocationChange">
+                <el-radio-button v-for="location in locations" 
+                               :key="location" 
+                               :label="location">
+                  {{ location }}
+                </el-radio-button>
+              </el-radio-group>
+            </div>
             <!-- 图表标题 -->
             <div class="chart-title">
-              <span style="margin-right: 10px;">地点：广州</span>
-              时间：{{ currentDate }}
+              <span style="margin-right: 10px;">地点：{{ currentLocation }}</span>
+              <span style="margin-left: 10px;">时间：{{ currentDate }}</span>
+              <span style="margin-left: 10px;">建议灌溉时间：{{ suggestTime }}</span>
             </div>
             <div id="main-chart"></div>
           </div>
@@ -89,17 +99,21 @@
   const currentCrop = ref('Apple');
   const cropData = ref(null);
   let myChart = null;
-  
+  const suggestTime = ref('');
   // 当前时间
   const currentDate = computed(() => {
     const now = new Date();
     return now.toLocaleDateString(); // 格式化为本地日期字符串
   });
   
+  // 地点列表
+  const locations = ['三亚', '广州', '昆明', '海口', '南宁'];
+  const currentLocation = ref('广州');
+  
   // 加载Excel数据
-  const loadExcelData = async () => {
+  const loadExcelData = async (location) => {
     try {
-      const response = await fetch('./作物状态记录广州.xlsx');
+      const response = await fetch(`./作物状态记录${location}.xlsx`);
       const arrayBuffer = await response.arrayBuffer();
       const data = new Uint8Array(arrayBuffer);
       const workbook = XLSX.read(data, { type: 'array' });
@@ -107,6 +121,7 @@
       cropData.value = XLSX.utils.sheet_to_json(firstSheet);
     } catch (error) {
       console.error('加载Excel数据失败:', error);
+      ElMessage.error('加载数据失败');
     }
   };
   
@@ -122,7 +137,7 @@
   
     const cropInfo = cropData.value.find(item => item['作物名'] === cropName);
     if (!cropInfo) return;
-  
+    suggestTime.value = cropInfo['建议时间'];
     console.log('灌溉量数据:', { 
       原始值: cropInfo,
       转换后: parseFloat(cropInfo['建议灌溉量'] || 0).toFixed(2)
@@ -161,9 +176,9 @@
           name: '当前条件',
           type: 'bar',
           data: [
-            parseFloat(cropInfo['当前温度']).toFixed(2),
-            parseFloat(cropInfo['当前湿度']).toFixed(2),
-            parseFloat(cropInfo['当前日降雨量']).toFixed(2),
+            parseFloat(cropInfo['当前温度(°C)']).toFixed(2),
+            parseFloat(cropInfo['当前湿度(%)']).toFixed(2),
+            parseFloat(cropInfo['当前日降雨量(mm)']).toFixed(2),
             null
           ],
           itemStyle: {
@@ -178,9 +193,9 @@
           name: '最佳条件',
           type: 'bar',
           data: [
-            parseFloat(cropInfo['最佳温度']).toFixed(2),
-            parseFloat(cropInfo['最佳湿度']).toFixed(2),
-            parseFloat(cropInfo['最佳日降雨量']).toFixed(2),
+            parseFloat(cropInfo['最佳温度(°C)']).toFixed(2),
+            parseFloat(cropInfo['最佳湿度(%)']).toFixed(2),
+            parseFloat(cropInfo['最佳日降雨量(mm)']).toFixed(2),
             null
           ],
           itemStyle: {
@@ -199,7 +214,7 @@
             null,
             null,
             null,
-            parseFloat(cropInfo['建议灌溉量'] || 0).toFixed(2)
+            parseFloat(cropInfo['灌溉建议(mm)'] || 0).toFixed(2)
           ],
           itemStyle: {
             color: '#FAC858'
@@ -234,21 +249,30 @@
   });
   
   // 获取天气信息
-  const fetchWeather = async () => {
+  const fetchWeather = async (location) => {
     try {
-      const res = await getWeather();
+      const res = await getWeather(location);
       if (res.code === 200) {
         weather.value = res.data;
       }
     } catch (error) {
       console.error('获取天气信息失败:', error);
+      ElMessage.error('获取天气信息失败');
     }
+  };
+  
+  // 处理地点切换
+  const handleLocationChange = async (location) => {
+    currentLocation.value = location;
+    await loadExcelData(location);
+    await fetchWeather(location);
+    updateChart(currentCrop.value);
   };
   
   // 组件挂载时初始化
   onMounted(async () => {
-    await loadExcelData();
-    await fetchWeather(); // 获取天气数据
+    await loadExcelData(currentLocation.value);
+    await fetchWeather(currentLocation.value);
     initChart();
     updateChart(currentCrop.value);
     
@@ -256,9 +280,6 @@
     window.addEventListener('resize', () => {
       myChart?.resize();
     });
-    
-    // 定时更新天气信息（每30分钟）
-    setInterval(fetchWeather, 30 * 60 * 1000);
   });
   
   const username = ref(localStorage.getItem('username') || '用户');
@@ -369,5 +390,18 @@
   .weather-item .el-icon {
     font-size: 24px;
     color: #409EFF;
+  }
+  
+  .location-selector {
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  
+  .el-radio-group {
+    margin-bottom: 15px;
+  }
+  
+  .el-radio-button {
+    margin: 0 5px;
   }
   </style>

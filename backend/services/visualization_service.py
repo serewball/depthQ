@@ -7,6 +7,12 @@ from matplotlib import font_manager
 class VisualizationService:
     def __init__(self):
         self.irrigation_history = []
+        self.history_file = "irrigation_history.csv"
+        
+        # 如果历史文件存在，则加载它
+        if os.path.exists(self.history_file):
+            self.load_history()
+        
         # 创建基础输出目录
         self.base_output_dir = os.path.join(os.getcwd(), 'output')
         self.images_dir = os.path.join(self.base_output_dir, 'images')
@@ -33,19 +39,56 @@ class VisualizationService:
         
     def add_irrigation_record(self, timestamp, crop_name, water_amount, conditions):
         """添加灌溉记录"""
+        record = {
+            'timestamp': timestamp,
+            'crop_name': crop_name,
+            'water_amount': water_amount,
+            'temperature': conditions.get('temperature', 0),
+            'humidity': conditions.get('humidity', 0),
+            'daily_rainfall': conditions.get('daily_rainfall', 0)
+        }
+        self.irrigation_history.append(record)
+        self.save_history()
+        print(f"成功添加灌溉记录: {crop_name}")
+
+    def get_irrigation_history_df(self, crop_name=None):
+        """获取灌溉历史数据框"""
+        if not self.irrigation_history:
+            # 如果没有历史记录，返回空的DataFrame
+            return pd.DataFrame(columns=[
+                'timestamp', 'crop_name', 'water_amount', 
+                'temperature', 'humidity', 'daily_rainfall'
+            ])
+        
+        # 转换为DataFrame
+        df = pd.DataFrame(self.irrigation_history)
+        
+        # 如果指定了作物名称，则过滤数据
+        if crop_name:
+            df = df[df['crop_name'] == crop_name]
+            
+        # 确保时间戳格式正确
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # 按时间排序
+        df = df.sort_values('timestamp')
+        
+        return df
+
+    def save_history(self):
+        """保存灌溉历史到文件"""
+        df = pd.DataFrame(self.irrigation_history)
+        df.to_csv(self.history_file, index=False)
+
+    def load_history(self):
+        """从文件加载灌溉历史"""
         try:
-            self.irrigation_history.append({
-                'timestamp': timestamp,
-                'crop_name': crop_name,
-                'water_amount': water_amount,
-                'temperature': conditions['temperature'],
-                'humidity': conditions['humidity'],
-                'rainfall': conditions['daily_rainfall']
-            })
-            print(f"成功添加灌溉记录: {crop_name}")
+            df = pd.read_csv(self.history_file)
+            self.irrigation_history = df.to_dict('records')
         except Exception as e:
-            print(f"添加灌溉记录失败: {e}")
-    
+            print(f"加载历史记录时出错: {e}")
+            self.irrigation_history = []
+
     def get_next_number(self, crop_name):
         """获取下一个可用的序号"""
         # 创建作物目录
@@ -150,7 +193,7 @@ class VisualizationService:
             plt.subplot(2, 1, 2)
             plt.plot(df['timestamp'], df['temperature'], marker='s', label='温度(°C)')
             plt.plot(df['timestamp'], df['humidity'], marker='^', label='湿度(%)')
-            plt.plot(df['timestamp'], df['rainfall'], marker='v', label='降雨量(mm)')
+            plt.plot(df['timestamp'], df['daily_rainfall'], marker='v', label='降雨量(mm)')
             plt.xlabel('时间')
             plt.ylabel('数值')
             plt.legend()

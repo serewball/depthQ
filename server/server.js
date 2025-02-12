@@ -115,14 +115,34 @@ app.post('/api/logout', (req, res) => {
   }
 });
 
+// 地点坐标映射
+const LOCATIONS = {
+  '三亚': { lat: 18.2528, lon: 109.5127 },
+  '广州': { lat: 23.1291, lon: 113.2644 },
+  '昆明': { lat: 24.8801, lon: 102.8329 },
+  '海口': { lat: 20.0442, lon: 110.1995 },
+  '南宁': { lat: 22.8170, lon: 108.3665 }
+};
+
 // 天气接口
 app.get('/api/weather', async (req, res) => {
   try {
+    const location = req.query.location || '广州';
+    const coords = LOCATIONS[location];
+    
+    if (!coords) {
+      return res.status(400).json({
+        code: 400,
+        message: '无效的地点'
+      });
+    }
+
     const response = await axios.get(`https://api.openweathermap.org/data/2.5/weather`, {
       params: {
-        q: 'Guangzhou',
+        lat: coords.lat,
+        lon: coords.lon,
         appid: '93625251f33ce2e39dea5a9f1e110c92',
-        units: 'metric' // 使用摄氏度
+        units: 'metric'
       }
     });
 

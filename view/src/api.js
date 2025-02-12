@@ -45,9 +45,9 @@ api.interceptors.request.use(config => {
 });
 
 // 获取天气信息
-export const getWeather = async () => {
+export const getWeather = async (location) => {
   try {
-    const response = await api.get('/weather');
+    const response = await api.get('/weather', { params: { location } });
     return response.data;
   } catch (error) {
     throw error.response?.data || { message: '获取天气信息失败' };

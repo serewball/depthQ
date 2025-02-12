@@ -227,37 +227,37 @@ class CropService:
         return next_state
     
     def _get_irrigation_timing(self, temperature, humidity):
-        """生成灌溉时间建议（新增详细逻辑）"""
+        """生成灌溉时间建议"""
         try:
-            # 温度判断标准
+            # 温度判断标准（从高温到低温排序）
             temp_thresholds = [
-                (35, "凌晨（4:00-6:00）"),
-                (30, "清晨（5:00-7:00）"),
-                (25, "上午（8:00-10:00）"), 
-                (20, "下午（15:00-17:00）"),
-                (float('-inf'), "正午（11:00-13:00）")
+                (35, "凌晨（4:00-6:00）"),  # 高温时选择凌晨
+                (30, "清晨（5:00-7:00）"),  # 较高温选择清晨
+                (25, "傍晚（17:00-19:00）"),  # 中等温度选择傍晚
+                (20, "早晨（6:00-8:00）"),   # 较低温选择早晨
+                (float('-inf'), "上午（8:00-10:00）")  # 低温时可以选择上午
             ]
             
             # 湿度判断标准
             humidity_ranges = [
-                (70, "建议推迟灌溉"),
-                (60, "建议分2次灌溉，间隔3小时"),
-                (50, "建议单次完成"),
-                (40, "建议分3次灌溉，间隔2小时"),
-                (float('-inf'), "立即灌溉")
+                (80, "建议待湿度降低后再灌溉"),  # 湿度过高
+                (70, "建议分2次少量灌溉"),      # 湿度较高
+                (60, "建议正常灌溉"),          # 适中湿度
+                (40, "建议适当增加灌溉量"),     # 湿度较低
+                (float('-inf'), "建议多次少量灌溉")  # 湿度过低
             ]
             
             # 查找温度建议
-            time_suggestion = "建议时间："
+            time_suggestion = None
             for threshold, suggestion in temp_thresholds:
-                if temperature > threshold:
+                if temperature >= threshold:
                     time_suggestion = suggestion
                     break
                 
             # 查找湿度建议
-            freq_suggestion = "频率建议："
+            freq_suggestion = None
             for threshold, suggestion in humidity_ranges:
-                if humidity > threshold:
+                if humidity >= threshold:
                     freq_suggestion = suggestion
                     break
                 
@@ -266,9 +266,11 @@ class CropService:
             
             # 特殊条件处理
             if temperature > 35 and humidity < 40:
-                detailed_advice += "（注意防蒸发）"
+                detailed_advice += "（注意防止水分蒸发）"
             elif temperature < 10:
                 detailed_advice += "（建议使用温水灌溉）"
+            elif humidity > 85:
+                detailed_advice = "当前湿度过高，建议暂缓灌溉"
             
             return detailed_advice
             
